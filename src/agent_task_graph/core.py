@@ -181,7 +181,10 @@ class TaskGraph:
         Raises:
             DuplicateTaskError: If *task_id* is already registered.
             MissingDependencyError: If any dep ID is not in the graph.
-            CycleError: If adding these deps would create a cycle.
+
+        Note:
+            Adding a task can never introduce a cycle: a freshly inserted
+            task cannot be a dependency of any existing task.
         """
         if task_id in self._nodes:
             raise DuplicateTaskError(task_id)
@@ -303,15 +306,11 @@ class TaskGraph:
         Raises:
             CycleError: If the graph contains a cycle.
         """
-        in_deg: dict[str, int] = {tid: 0 for tid in self._order}
-        for tid in self._order:
-            for dep in self._nodes[tid].deps:
-                if dep in in_deg:
-                    in_deg[tid] += 1  # tid depends on dep
-        # Actually recompute properly: in_degree = number of deps in graph
-        in_deg = {}
-        for tid in self._order:
-            in_deg[tid] = sum(1 for dep in self._nodes[tid].deps if dep in self._nodes)
+        # in_degree of a node = number of its deps that exist in the graph.
+        in_deg: dict[str, int] = {
+            tid: sum(1 for dep in self._nodes[tid].deps if dep in self._nodes)
+            for tid in self._order
+        }
         queue = [tid for tid in self._order if in_deg[tid] == 0]
         result: list[TaskNode] = []
         while queue:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_task_graph import (
+    CycleError,
     TaskGraph,
     TaskNode,
     TaskNotFoundError,
@@ -434,3 +435,92 @@ def test_repr():
     r = repr(g)
     assert "TaskGraph" in r
     assert "1" in r
+
+
+# ---------------------------------------------------------------------------
+# TaskGraph — cycle detection
+# ---------------------------------------------------------------------------
+
+
+def test_topological_sort_detects_cycle():
+    # A cycle cannot be built via add(), so construct one through from_dict.
+    data = {
+        "order": ["a", "b"],
+        "nodes": [
+            {"id": "a", "name": "A", "status": "pending", "deps": ["b"]},
+            {"id": "b", "name": "B", "status": "pending", "deps": ["a"]},
+        ],
+    }
+    g = TaskGraph.from_dict(data)
+    with pytest.raises(CycleError):
+        g.topological_sort()
+
+
+def test_topological_sort_disconnected_nodes():
+    g = TaskGraph()
+    g.add("a", "A")
+    g.add("b", "B")
+    order = [n.id for n in g.topological_sort()]
+    assert set(order) == {"a", "b"}
+
+
+# ---------------------------------------------------------------------------
+# TaskGraph — misc query / transition edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_dependents_of_unknown_raises():
+    g = TaskGraph()
+    with pytest.raises(TaskNotFoundError):
+        g.dependents_of("nope")
+
+
+def test_blocked_by_unknown_raises():
+    g = TaskGraph()
+    with pytest.raises(TaskNotFoundError):
+        g.blocked_by("nope")
+
+
+def test_reset_from_pending_raises():
+    g = TaskGraph()
+    g.add("t1", "A")
+    with pytest.raises(InvalidTransitionError):
+        g.reset("t1")  # PENDING → PENDING not allowed
+
+
+def test_contains():
+    g = TaskGraph()
+    g.add("a", "A")
+    assert "a" in g
+    assert "missing" not in g
+
+
+def test_failed_dep_blocks_ready():
+    g = TaskGraph()
+    g.add("t1", "A")
+    g.add("t2", "B", deps=["t1"])
+    g.start("t1")
+    g.fail("t1")
+    # t2 must not be ready while its dependency is FAILED.
+    assert {n.id for n in g.ready()} == set()
+
+
+def test_from_dict_preserves_order():
+    g = TaskGraph()
+    g.add("a", "A")
+    g.add("b", "B")
+    g.add("c", "C")
+    restored = TaskGraph.from_dict(g.to_dict())
+    assert [n.id for n in restored.all()] == ["a", "b", "c"]
+
+
+def test_done_and_failed_queries():
+    g = TaskGraph()
+    g.add("a", "A")
+    g.add("b", "B")
+    g.start("a")
+    g.complete("a")
+    g.start("b")
+    g.fail("b")
+    assert [n.id for n in g.done()] == ["a"]
+    assert [n.id for n in g.failed()] == ["b"]
